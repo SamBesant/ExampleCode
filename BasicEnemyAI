@@ -1,0 +1,376 @@
+using UnityEngine;
+using System.Collections;
+
+//PLEASE NOTE THIS IS A FIRST GENERATION AI WRITTEN FOR SHORT TERM PURPOSES
+
+/// <summary>
+/// Zombie enemy AI. - Second Draft
+/// this is the head command module for the zombie AI
+/// Author: Sam Besant
+/// </summary>
+
+public class ZombieAISecondEd : MonoBehaviour {
+	
+	//player location
+	public Transform playerOneLocation;
+	public float distanceAwayFromPlayer = 0.0f;
+	
+	//animator and Follow controller
+	public Animator animator;
+	FollowCtrl followCtrl;
+	
+	//health
+	public int health = 50;
+	private bool isDead = false;
+	
+	//weapon type (random maybe?)
+	public int weaponType = 0;
+	
+	//call range (150 - 300 units?)
+	public float callRange = 200;
+	
+	//walk speed
+	public float walkSpeed = 10;
+	
+	//run speed
+	public float runSpeed = 1000000.0f;
+	
+	//a loop to turn AI off untill in range
+	private bool inAIRange = false;
+	private float aiOffDistance = 150;
+	
+	//TODO: a function for tree avoidance
+	
+	
+	
+	//sound receiption function
+	bool selfCall = false;
+	bool recievedCall = false;
+	
+	//timers
+	public float callDelaySeen = 15.0f;
+	public float callDelayUnseen = 5.0f;
+	public float callDelayRecivedCall = 0.0f;
+	
+	private float time = 0.00f;
+	public float callTimer = 15.0f;
+	
+	
+	//aggro range
+	bool aggroRange = false;
+	
+	//attacking details
+	bool attackRange = false;
+	public float attackrate = 2.0f;
+	
+	//hearingRange
+	bool soundRange = false;
+	
+	//smellRange
+	bool smellRange = false;
+	
+	//sightRange
+	bool sightRange = false;
+	bool canBeSeen = false;
+	Vector3 lastSeenLocation;
+	
+		
+	// Use this for initialization
+	void Start () {
+		
+		//find how far away player is from AI
+		distanceAwayFromPlayer = Vector3.Distance(playerOneLocation.position, transform.root.transform.position);
+		//debugging
+		Debug.Log(distanceAwayFromPlayer);
+		
+		//unless the AI is too far from player, turn on routines
+		if ( distanceAwayFromPlayer < aiOffDistance )
+		{
+			inAIRange = true;
+		}
+		
+		//for if the player runs behind objects, zombies are stupid yeh?
+		lastSeenLocation = playerOneLocation.position;
+		
+		//add a listener for other zombies screaming
+		Messenger.AddListener("ZombieCall", ZombieCall);
+		
+		//delivers the player transform
+		Messenger<Transform>.AddListener( "DeliverPlayerTransform" , DeliverPlayerTransform);
+		
+		
+		//sends message to fetch player transform
+		Messenger.Broadcast( "FetchPlayerTransform" );
+		
+		
+	}
+	
+	void OnEnable()
+	{	
+		
+	}
+	
+	
+	void Awake ()
+	{
+		
+	}
+	
+	//fixed update for physics and non cruicial things
+	void FixedUpdate ()
+	{
+		//if we dont have the player transform, get it
+		if ( playerOneLocation == null )
+		{
+			Messenger.Broadcast( "FetchPlayerTransform" );
+		}
+		
+		
+		//time inits
+		time += Time.deltaTime;
+		callTimer += Time.deltaTime;
+		
+		//for debug
+		//Debug.Log(distanceAwayFromPlayer);
+		
+		//if AI routines are turned on
+		if(inAIRange)
+		{
+			//how far are we from player
+			distanceAwayFromPlayer = Vector3.Distance(playerOneLocation.position, transform.root.transform.position);
+		
+			//if we are in close range enable attacking
+			if ( distanceAwayFromPlayer < 3.0f)
+			{
+				aggroRange = false;
+				attackRange = true;
+			}
+			//if we are intermediate range turn on aggro
+			else if( distanceAwayFromPlayer < 25.0f && distanceAwayFromPlayer > 3.0f  && !( transform.root.transform.position == lastSeenLocation ))
+			{
+				aggroRange = true;
+				attackRange = false;
+				//Debug.Log("anus");
+			}
+			//if the player has gone out of sight, make the zombie run to the last know location
+			else if ( transform.root.transform.position == lastSeenLocation ) // && !( distanceAwayFromPlayer < 3.0f ) )
+			{
+				//attackRange = false;
+				aggroRange = false;
+			}
+			
+			//smell range
+			if( distanceAwayFromPlayer < 10.0f)
+			{
+				smellRange = true;
+				SmellCall();
+			}
+			else 
+			{
+				smellRange = false;
+			}
+			
+			//sight range
+			if( distanceAwayFromPlayer < 150.0f)
+			{
+				sightRange = true;
+				SightCall();
+			}
+			else 
+			{
+				sightRange = false;
+			}
+			
+			//sound range
+			if( distanceAwayFromPlayer < 25.0f)
+			{
+				soundRange = true;
+				SoundCall();
+			}
+			else 
+			{
+				soundRange = false;
+			}
+			
+			//call aggro func
+			AggroCall();
+		}
+		
+		//if you recieve a call from other zombies
+		if ( recievedCall )
+		{
+			//distance from player init
+			distanceAwayFromPlayer = Vector3.Distance(playerOneLocation.position, transform.root.transform.position);
+			
+			//if within call range
+			if( distanceAwayFromPlayer < 500.0f )
+			{
+				//update calldelay with the time
+				callDelayRecivedCall += Time.deltaTime;
+				
+				//delay by how far away we are
+				float delayLogic = (distanceAwayFromPlayer / 80.0f)+ 1.0f + Random.Range( 1.0f, 4.0f );
+				
+				//if we can call do so
+				if( callDelayRecivedCall > delayLogic )
+				{
+					//havent recieved previous call
+					recievedCall = false;
+					
+					//reset delay
+					callDelayRecivedCall = 0.0f;
+					
+					//play the zombie call
+					audio.Play();
+					
+					//debugging
+					Debug.Log( "range zombie scream" );
+				}
+					
+			}
+		
+		}
+		
+	}
+	
+	
+	//master collider range to turn AI on or off, should be greater then any other senses range
+	void OnTriggerEnter(Collider collider)
+	{
+		if( collider.transform.root.gameObject.tag == "Player" )
+		{
+			inAIRange = true;
+		}
+		
+		
+	}
+	void OnTriggerExit(Collider collider)
+	{
+		if( collider.transform.root.gameObject.tag == "Player" )
+		{
+			inAIRange = false;
+		}
+	}
+	
+	
+	//function for player in aggro range
+	void AggroCall()
+	{			
+		if(aggroRange)
+		{
+			//if the call timer has run out and we can see the player
+			if ( callTimer > callDelaySeen && canBeSeen)
+			{
+				//zombie scream
+				audio.Play();
+				
+				//stop ourselves responding to our own scream
+				selfCall = true;
+				
+				//broadcast the player being spotted
+				Messenger.Broadcast("ZombieCall");
+				
+				//reset call timer
+				callTimer = 0.0f;
+				
+				//debug
+				Debug.Log( "local zombie scream" );
+				
+			}
+			
+			//this entire next section handles the movement of the zombie from where it is standing to the players location
+			
+			float invertedAwayFromPlayer = ( ( distanceAwayFromPlayer / 40.0f ) + 0.01f );
+						
+			invertedAwayFromPlayer = invertedAwayFromPlayer * -1.0f;
+			
+			invertedAwayFromPlayer += 1.0f;
+			
+			//look at player
+			iTween.LookUpdate( transform.root.gameObject, playerOneLocation.position, 1.0f );
+			
+			//move to player
+			iTween.MoveUpdate( transform.root.gameObject, lastSeenLocation, 3.01f / invertedAwayFromPlayer  );  //Time.deltaTime * distanceAwayFromPlayer );
+			
+			//set mecanims settings for zombie
+			animator.SetFloat("speed", invertedAwayFromPlayer + 0.5f );
+						
+		}
+		else 
+		{
+			//change animator settings and stop movement
+			animator.SetFloat("speed", 0.0f );
+			iTween.Stop( transform.root.gameObject );
+		}
+		
+		if (attackRange)
+		{
+			//update looking at the player
+			iTween.LookUpdate( transform.root.gameObject, playerOneLocation.position, 1.0f );
+		}
+	
+	}
+	
+	
+	//function for player in sight range, uses raytrace between zombie and player
+	void SightCall()
+	{
+		RayTracerGen rtg = new RayTracerGen();
+			RaycastHit hit = rtg.RayTraceGen( transform.root.transform.position, (playerOneLocation.position - transform.root.transform.position), Mathf.Infinity,Physics.kAllLayers);
+			//Debug.Log(hit.transform);
+			if( hit.transform != null)
+			{
+				Debug.DrawRay( transform.root.transform.position, (playerOneLocation.position - transform.root.transform.position));
+			
+				if( hit.transform.tag == "Player")
+				{
+					lastSeenLocation = playerOneLocation.position;
+					canBeSeen = true;
+					//Debug.Log("seen");
+				}
+				else
+				{
+					canBeSeen = false;
+					//Debug.Log("unseen");
+				}
+			}
+	}
+	
+	
+	//funciton for player in smell range
+	void SmellCall()
+	{
+		
+	}
+	
+	
+	//funciton for player in hearing range
+	void SoundCall()
+	{
+		
+	}
+	
+	//for zombie screams
+	void ZombieCall()
+	{
+		if(!selfCall)
+		{
+			recievedCall = true;
+		}
+		
+		selfCall = false;
+		
+		
+	}
+	
+	//gets the player transform
+	void DeliverPlayerTransform(Transform t)
+	{
+		playerOneLocation = t;
+	}
+}
+
+	
+
+	
+
